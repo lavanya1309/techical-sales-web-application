@@ -4,6 +4,7 @@ import type { SalesData } from "@shared/schema";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, Eye, EyeOff, MapPin, Maximize, RefreshCw, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 
 interface MapVisualizationProps {
   selectedYears: string[];
@@ -23,38 +24,23 @@ declare const window: GoogleMapsWindow & { currentMarkers: any[]; currentInfoWin
 
 export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVisualizationProps) {
   const mapRef = useRef<HTMLDivElement>(null);
-  const [map, setMap] = useState<any>(null);
+  const mapRefObj = useRef<any>(null);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
   const [selectedCity, setSelectedCity] = useState<SalesData | null>(null);
   const [showBoundaries, setShowBoundaries] = useState(true);
   const boundariesLoadedRef = useRef(false);
   const [showDistrictLabels, setShowDistrictLabels] = useState(false);
   const [districtLabelOverlays, setDistrictLabelOverlays] = useState<any[]>([]);
+  const [cityLabelOverlays, setCityLabelOverlays] = useState<any[]>([]);
+  const [mapType, setMapType] = useState("roadmap");
+  // Track the district boundaries layer
+  const districtBoundariesLayerRef = useRef<any>(null);
+  // Track features added for district boundaries
+  const [districtBoundaryFeatures, setDistrictBoundaryFeatures] = useState<any[]>([]);
 
   const { data: salesData = [], isLoading } = useQuery<SalesData[]>({
     queryKey: ["/api/sales-data"],
   });
-
-  // Zoom in and out functions
-  const zoomIn = () => {
-    if (map) {
-      const currentZoom = map.getZoom();
-      const maxZoom = map.getOptions().maxZoom || 12;
-      if (currentZoom < maxZoom) {
-        map.setZoom(currentZoom + 1);
-      }
-    }
-  };
-
-  const zoomOut = () => {
-    if (map) {
-      const currentZoom = map.getZoom();
-      const minZoom = map.getOptions().minZoom;
-      if (currentZoom > minZoom) {
-        map.setZoom(currentZoom - 1);
-      }
-    }
-  };
 
   // Load Google Maps API
   useEffect(() => {
@@ -106,11 +92,12 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
           elementType: "labels",
           stylers: [{ visibility: "off" }], // Hide state labels
         },
-        {
-          featureType: "administrative.locality",
-          elementType: "labels",
-          stylers: [{ visibility: "off" }], // Hide city/town labels
-        },
+        // Remove or comment out this block to show city/town/village names
+        // {
+        //   featureType: "administrative.locality",
+        //   elementType: "labels",
+        //   stylers: [{ visibility: "off" }], // Hide city/town labels
+        // },
         {
           featureType: "road",
           stylers: [{ visibility: "off" }], // Hide all roads
@@ -121,7 +108,7 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
         },
       ]);
 
-      // INDIA BOUNDS
+      // INDIA BOUNDS for map restriction
       const indiaBounds = {
         north: 37.5,
         south: 6.0,
@@ -130,51 +117,39 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
       };
 
       const mapInstance = new window.google.maps.Map(mapRef.current, {
-        center: { lat: 21.0, lng: 83.0 }, // Fallback center
-        zoom: 4.5, // Initial zoom level
-        minZoom: 4.5, // Prevent zooming out too far
-        maxZoom: 12, // Allow zooming in
-        restriction: {
-          latLngBounds: indiaBounds,
-          strictBounds: true, // Restrict view to India only
-        },
+        center: { lat: 22.5, lng: 82.5 }, // Centered to fit all of India
+        zoom: 4, // Reasonable initial zoom
+        minZoom: 4, // Prevent zooming out further than the initial view
+        maxZoom: 12,
         gestureHandling: "greedy",
         scrollwheel: true,
         disableDoubleClickZoom: false,
+        zoomControl: true,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+        scaleControl: true,
+        rotateControl: true,
+        disableDefaultUI: false,
         zoomControlOptions: {
           position: window.google.maps.ControlPosition.RIGHT_CENTER,
         },
-        mapTypeId: "styled_map",
-        disableDefaultUI: false,
-        zoomControl: true,
-        mapTypeControl: false,
-        scaleControl: true,
-        streetViewControl: false,
-        rotateControl: false,
-        fullscreenControl: false,
+        mapTypeId: mapType,
+        restriction: {
+          latLngBounds: {
+            north: 45,
+            south: -10,
+            west: 55,
+            east: 120,
+          },
+          strictBounds: true,
+        },
       });
 
       // Register the styled map type
       mapInstance.mapTypes.set("styled_map", styledMapType);
 
-      // Fit map to India bounds
-      mapInstance.fitBounds(indiaBounds);
-
-      // Set minZoom to current zoom after fitBounds to prevent zooming out too far
-      mapInstance.addListener('bounds_changed', () => {
-        const currentZoom = mapInstance.getZoom();
-        mapInstance.setOptions({ minZoom: currentZoom });
-        window.google.maps.event.clearListeners(mapInstance, 'bounds_changed');
-      });
-
-      // Add listener to enforce minimum zoom
-      mapInstance.addListener('zoom_changed', () => {
-        if (mapInstance.getZoom() < mapInstance.getOptions().minZoom) {
-          mapInstance.setZoom(mapInstance.getOptions().minZoom);
-        }
-      });
-
-      setMap(mapInstance);
+      mapRefObj.current = mapInstance;
       setIsMapLoaded(true);
 
       // Remove any previous data layers if present
@@ -191,13 +166,92 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
           mapInstance.data.setStyle({
             strokeColor: "rgba(100,100,100,0.5)",
             strokeWeight: 0.7,
-            fillColor: "#008000",
-            fillOpacity: 1, // Transparent to show base map's green color
+            fillColor: "transparent",
+            fillOpacity: 0,
             clickable: false,
           });
         })
         .catch((err) => {
           console.error("Failed to load district boundaries GeoJSON:", err);
+        });
+
+      // Fetch and add GeoJSON for India's state boundaries and overlay state names
+      fetch("/gadm41_IND_1.json")
+        .then((res) => res.json())
+        .then((geojson) => {
+          // Add state boundaries
+          mapInstance.data.addGeoJson(geojson);
+          mapInstance.data.setStyle({
+            strokeColor: "#FF0000",
+            strokeWeight: 2,
+            fillOpacity: 0,
+            clickable: false,
+          });
+          // Add state name labels at centroid
+          geojson.features.forEach((feature: any) => {
+            const name = feature.properties.NAME_1;
+            let coords = feature.geometry.coordinates;
+            // Handle MultiPolygon and Polygon
+            if (feature.geometry.type === "MultiPolygon") {
+              coords = coords[0][0];
+            } else if (feature.geometry.type === "Polygon") {
+              coords = coords[0];
+            }
+            // Calculate centroid
+            let lat = 0, lng = 0;
+            coords.forEach((c: number[]) => {
+              lng += c[0];
+              lat += c[1];
+            });
+            lng /= coords.length;
+            lat /= coords.length;
+            // Create label overlay
+            const labelDiv = document.createElement("div");
+            labelDiv.style.cssText = `
+              position: absolute;
+              background: rgba(255,255,255,0.7);
+              padding: 2px 6px;
+              font-size: 13px;
+              font-weight: bold;
+              color: #d32f2f;
+              border-radius: 3px;
+              border: 1px solid #e5e7eb;
+              pointer-events: none;
+              z-index: 1000;
+              white-space: nowrap;
+            `;
+            labelDiv.innerHTML = name;
+            const overlay = new window.google.maps.OverlayView();
+            overlay.onAdd = function () {
+              this.getPanes().overlayLayer.appendChild(labelDiv);
+            };
+            overlay.draw = function () {
+              const projection = this.getProjection();
+              const position = projection.fromLatLngToDivPixel(
+                new window.google.maps.LatLng(lat, lng)
+              );
+              labelDiv.style.left = position.x + "px";
+              labelDiv.style.top = position.y + "px";
+            };
+            overlay.onRemove = function () {
+              if (labelDiv.parentNode) {
+                labelDiv.parentNode.removeChild(labelDiv);
+              }
+            };
+            overlay.setMap(mapInstance);
+          });
+        })
+        .catch((err) => {
+          console.error("Failed to load state boundaries GeoJSON:", err);
+        });
+
+      // Fit map to India bounds once the map is idle and has its final dimensions.
+      window.google.maps.event.addListenerOnce(mapInstance, 'idle', function(){
+        const bounds = new window.google.maps.LatLngBounds(
+          new window.google.maps.LatLng(5, 60), // Further expanded Southwest corner
+          new window.google.maps.LatLng(40, 105) // Further expanded Northeast corner
+        );
+        mapInstance.fitBounds(bounds, { padding: 0 });
         });
     };
 
@@ -229,25 +283,31 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
     };
 
     loadGoogleMaps();
-  }, []);
+  }, [mapType]);
 
   // Effect to handle boundaries overlay toggle
   useEffect(() => {
-    if (!map || !isMapLoaded) return;
-    map.data.forEach((feature: any) => {
-      map.data.remove(feature);
+    if (!mapRefObj.current || !isMapLoaded) return;
+
+    // Remove all features with NAME_2 property (district boundaries)
+    const featuresToRemove: any[] = [];
+    mapRefObj.current.data.forEach((feature: any) => {
+      if (feature.getProperty && feature.getProperty("NAME_2")) {
+        featuresToRemove.push(feature);
+      }
     });
-    boundariesLoadedRef.current = false;
+    featuresToRemove.forEach((feature) => mapRefObj.current.data.remove(feature));
+
     if (showBoundaries) {
       fetch("/gadm41_IND_2.json")
         .then((res) => res.json())
         .then((geojson) => {
-          map.data.addGeoJson(geojson);
-          map.data.setStyle({
+          mapRefObj.current.data.addGeoJson(geojson);
+          mapRefObj.current.data.setStyle({
             strokeColor: "rgba(100,100,100,0.5)",
             strokeWeight: 0.7,
-            fillColor: "#008000",
-            fillOpacity: 1, // Transparent to show base map's green color
+            fillColor: "transparent",
+            fillOpacity: 0,
             clickable: false,
           });
           boundariesLoadedRef.current = true;
@@ -256,7 +316,7 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
           console.error("Failed to load district boundaries GeoJSON:", err);
         });
     }
-  }, [map, isMapLoaded, showBoundaries]);
+  }, [isMapLoaded, showBoundaries]);
 
   // Helper to compute centroid of a polygon
   function getPolygonCentroid(coords: any[][]) {
@@ -280,16 +340,17 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
 
   // Add/Remove district labels overlays
   useEffect(() => {
-    if (!map || !isMapLoaded || !showDistrictLabels) {
+    if (!mapRefObj.current || !isMapLoaded) {
       districtLabelOverlays.forEach((overlay) => overlay.setMap(null));
       setDistrictLabelOverlays([]);
       return;
     }
-    if (map.getZoom() < 7) {
+    if (!showDistrictLabels || mapRefObj.current.getZoom() < 7) {
       districtLabelOverlays.forEach((overlay) => overlay.setMap(null));
       setDistrictLabelOverlays([]);
       return;
     }
+    // Re-add overlays when toggled ON
     fetch("/gadm41_IND_2.json")
       .then((res) => res.json())
       .then((geojson) => {
@@ -333,17 +394,65 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
           overlay.onRemove = function () {
             if (labelDiv.parentNode) labelDiv.parentNode.removeChild(labelDiv);
           };
-          overlay.setMap(map);
+          overlay.setMap(mapRefObj.current);
           overlays.push(overlay);
         });
         setDistrictLabelOverlays(overlays);
       });
-    const zoomListener = map.addListener("zoom_changed", () => {
-      if (map.getZoom() < 7) {
+    const zoomListener = mapRefObj.current.addListener("zoom_changed", () => {
+      if (!showDistrictLabels || mapRefObj.current.getZoom() < 7) {
         districtLabelOverlays.forEach((overlay) => overlay.setMap(null));
         setDistrictLabelOverlays([]);
       } else {
-        setShowDistrictLabels(true);
+        // Re-add overlays if toggled ON and zoomed in
+        fetch("/gadm41_IND_2.json")
+          .then((res) => res.json())
+          .then((geojson) => {
+            const overlays: any[] = [];
+            geojson.features.forEach((feature: any) => {
+              let coords = feature.geometry.coordinates;
+              let centroid;
+              if (feature.geometry.type === "Polygon") {
+                centroid = getPolygonCentroid(coords[0]);
+              } else if (feature.geometry.type === "MultiPolygon") {
+                centroid = getPolygonCentroid(coords[0][0]);
+              }
+              if (!centroid) return;
+              const name = feature.properties?.NAME_2 || feature.properties?.district || "";
+              if (!name) return;
+              const labelDiv = document.createElement("div");
+              labelDiv.style.cssText = `
+                background: rgba(255,255,255,0.85);
+                padding: 2px 8px;
+                font-size: 11px;
+                color: #444;
+                border-radius: 4px;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+                pointer-events: none;
+                white-space: nowrap;
+              `;
+              labelDiv.innerText = name;
+              const overlay = new window.google.maps.OverlayView();
+              overlay.onAdd = function () {
+                this.getPanes().overlayLayer.appendChild(labelDiv);
+              };
+              overlay.draw = function () {
+                const projection = this.getProjection();
+                const position = projection.fromLatLngToDivPixel(
+                  new window.google.maps.LatLng(centroid[1], centroid[0])
+                );
+                labelDiv.style.left = position.x + "px";
+                labelDiv.style.top = position.y + "px";
+              };
+              overlay.onRemove = function () {
+                if (labelDiv.parentNode) labelDiv.parentNode.removeChild(labelDiv);
+              };
+              overlay.setMap(mapRefObj.current);
+              overlays.push(overlay);
+            });
+            setDistrictLabelOverlays(overlays);
+          });
       }
     });
     return () => {
@@ -351,11 +460,82 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
       districtLabelOverlays.forEach((overlay) => overlay.setMap(null));
       setDistrictLabelOverlays([]);
     };
-  }, [map, isMapLoaded, showDistrictLabels]);
+  }, [isMapLoaded, showDistrictLabels]);
+
+  // Effect to handle city label overlays based on zoom level and marker/data changes
+  useEffect(() => {
+    if (!mapRefObj.current || !isMapLoaded) return;
+
+    // Helper to clear overlays
+    const clearCityLabels = () => {
+      cityLabelOverlays.forEach((overlay) => overlay.setMap(null));
+      setCityLabelOverlays([]);
+    };
+
+    // Handler for zoom changes and data changes
+    const refreshCityLabels = () => {
+      const zoom = mapRefObj.current.getZoom();
+      clearCityLabels();
+      if (zoom > 7 && showLabels) {
+        // Add city labels
+        const overlays: any[] = [];
+        salesData.forEach((item) => {
+          const totalSales = selectedYears.reduce((sum, year) => {
+            const salesKey = `sales${year}` as keyof SalesData;
+            return sum + (item[salesKey] as number || 0);
+          }, 0);
+          if (totalSales === 0) return;
+          const labelDiv = document.createElement("div");
+          labelDiv.style.cssText = `
+            position: absolute;
+            background: rgba(255,255,255,0.9);
+            padding: 2px 6px;
+            font-size: 10px;
+            font-weight: 500;
+            color: #374151;
+            border-radius: 3px;
+            border: 1px solid #e5e7eb;
+            pointer-events: none;
+            z-index: 1000;
+          `;
+          labelDiv.innerHTML = item.city;
+          const overlay = new window.google.maps.OverlayView();
+          overlay.onAdd = function () {
+            this.getPanes().overlayLayer.appendChild(labelDiv);
+          };
+          overlay.draw = function () {
+            const projection = this.getProjection();
+            const position = projection.fromLatLngToDivPixel(
+              new window.google.maps.LatLng(item.latitude, item.longitude)
+            );
+            labelDiv.style.left = position.x + 15 + "px";
+            labelDiv.style.top = position.y - 20 + "px";
+          };
+          overlay.onRemove = function () {
+            if (labelDiv.parentNode) {
+              labelDiv.parentNode.removeChild(labelDiv);
+            }
+          };
+          overlay.setMap(mapRefObj.current);
+          overlays.push(overlay);
+        });
+        setCityLabelOverlays(overlays);
+      }
+    };
+
+    // Listen for zoom changes
+    const zoomListener = mapRefObj.current.addListener("zoom_changed", refreshCityLabels);
+    // Refresh on mount and whenever data/view changes
+    refreshCityLabels();
+    return () => {
+      window.google.maps.event.removeListener(zoomListener);
+      clearCityLabels();
+    };
+  }, [mapRefObj, isMapLoaded, showLabels, salesData, selectedYears, viewMode]);
 
   // Update map with sales data
   useEffect(() => {
-    if (!map || !isMapLoaded || !salesData.length) return;
+    if (!mapRefObj.current || !isMapLoaded || !salesData.length) return;
 
     if (window.currentMarkers) {
       window.currentMarkers.forEach((marker: any) => {
@@ -376,10 +556,10 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
     } else {
       createClusters();
     }
-  }, [map, isMapLoaded, salesData, selectedYears, viewMode]);
+  }, [mapRefObj, isMapLoaded, salesData, selectedYears, viewMode]);
 
   const createHeatmap = () => {
-    if (!window.google || !map) return;
+    if (!window.google || !mapRefObj.current) return;
 
     const heatmapData = salesData.map((item) => {
       const totalSales = selectedYears.reduce((sum, year) => {
@@ -395,7 +575,7 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
 
     const heatmap = new window.google.maps.visualization.HeatmapLayer({
       data: heatmapData,
-      map: map,
+      map: mapRefObj.current,
       radius: 20,
       opacity: 0.6,
     });
@@ -403,7 +583,7 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
   };
 
   const createMarkers = () => {
-    if (!window.google || !map) return;
+    if (!window.google || !mapRefObj.current) return;
 
     if (window.currentMarkers) {
       window.currentMarkers.forEach((marker: any) => marker.setMap(null));
@@ -420,7 +600,7 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
 
       const marker = new window.google.maps.Marker({
         position: { lat: item.latitude, lng: item.longitude },
-        map: map,
+        map: mapRefObj.current,
         title: `${item.city}, ${item.state}`,
         icon: {
           path: window.google.maps.SymbolPath.CIRCLE,
@@ -460,7 +640,7 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
         if (window.currentInfoWindow) {
           window.currentInfoWindow.close();
         }
-        infoWindow.open(map, marker);
+        infoWindow.open(mapRefObj.current, marker);
         window.currentInfoWindow = infoWindow;
       });
 
@@ -510,7 +690,7 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
           }
         };
 
-        overlay.setMap(map);
+        overlay.setMap(mapRefObj.current);
         window.currentMarkers.push(overlay);
       }
     });
@@ -526,13 +706,12 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
   };
 
   const refreshMap = () => {
-    if (map) {
-      map.fitBounds({
-        north: 37.5,
-        south: 6.0,
-        west: 68.1,
-        east: 97.5,
-      });
+    if (mapRefObj.current) {
+      const bounds = new window.google.maps.LatLngBounds(
+        new window.google.maps.LatLng(5, 60),
+        new window.google.maps.LatLng(40, 105)
+      );
+      mapRefObj.current.fitBounds(bounds, { padding: 0 });
     }
   };
 
@@ -559,22 +738,6 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
           <Button
             variant="ghost"
             size="sm"
-            onClick={zoomIn}
-            title="Zoom In"
-          >
-            <ZoomIn className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={zoomOut}
-            title="Zoom Out"
-          >
-            <ZoomOut className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
             onClick={() => setShowBoundaries((v) => !v)}
             title={showBoundaries ? "Hide District Boundaries" : "Show District Boundaries"}
           >
@@ -592,7 +755,20 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
       </CardHeader>
       <CardContent className="p-0">
         <div className="relative">
-          <div ref={mapRef} className="h-[600px] w-full bg-neutral-100" />
+          <div ref={mapRef} className="w-full max-w-[1600px] h-[90vh] min-h-[600px] mx-auto bg-neutral-100 rounded-lg shadow" />
+          {/* Floating map type dropdown inside the map */}
+          <div className="absolute top-6 right-6 z-30">
+            <Select value={mapType} onValueChange={setMapType}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="roadmap">Roadmap</SelectItem>
+                <SelectItem value="hybrid">Hybrid</SelectItem>
+                <SelectItem value="satellite">Satellite</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {!isMapLoaded && (
             <div className="absolute inset-0 flex items-center justify-center bg-neutral-50">
               <div className="text-center">
@@ -669,10 +845,6 @@ export function MapVisualization({ selectedYears, viewMode, showLabels }: MapVis
                   </span>
                 </div>
               </div>
-              <Button size="sm" className="w-full mt-3">
-                <BarChart3 className="mr-2 h-3 w-3" />
-                View Detailed Analytics
-              </Button>
             </div>
           )}
         </div>
