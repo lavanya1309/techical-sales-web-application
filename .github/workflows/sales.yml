@@ -20,7 +20,7 @@ jobs:
 
     - name: Copy all repo files to EC2
       run: |
-        scp -i key.pem -r * ubuntu@YOUR_EC2_IP:/var/www/html/sales/
+        scp -i key.pem -r * ubuntu@52.20.95.68:/var/www/html/sales/
 
     - name: SSH into EC2 & build + start
       run: |
