@@ -1,0 +1,42 @@
+name: Build & Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build project
+      run: npm run build
+
+    - name: Add SSH key
+      run: |
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > key.pem
+        chmod 600 key.pem
+
+    - name: Copy dist to EC2
+      run: |
+        scp -i key.pem -r dist/* ubuntu@YOUR_EC2_IP:/var/www/html/here/
+
+    - name: Restart app on EC2
+      run: |
+        ssh -i key.pem ubuntu@YOUR_EC2_IP << 'EOF'
+          cd /var/www/html/here
+          npm install
+          pm2 restart all || pm2 start npm --name geographic-dashboard -- start
+        EOF
